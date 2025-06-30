@@ -38,6 +38,7 @@
 #include <Corrade/Containers/Reference.h>
 #include <Corrade/Utility/Resource.h>
 #include <Magnum/ImageView.h>
+#include <Magnum/PixelFormat.h>
 #include <Magnum/GL/Context.h>
 #include <Magnum/GL/DefaultFramebuffer.h>
 #include <Magnum/GL/Extensions.h>
@@ -51,6 +52,8 @@
 
 #include "Magnum/ImGuiIntegration/Integration.h"
 #include "Magnum/ImGuiIntegration/Widgets.h"
+#include <vector>
+#include <iostream>
 
 namespace Magnum { namespace ImGuiIntegration {
 
@@ -67,6 +70,12 @@ Context::Context(ImGuiContext& context, const Vector2& size, const Vector2i& win
     ImGui::SetCurrentContext(&context);
 
     ImGuiIO &io = ImGui::GetIO();
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+    
+    ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+    GLint maxTextureSize{};
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+    platform_io.Renderer_TextureMaxWidth = platform_io.Renderer_TextureMaxHeight = int(maxTextureSize);
 
     /* Tell ImGui that changing mouse cursors is supported */
     io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors;
@@ -142,6 +151,7 @@ ImGuiContext* Context::release() {
     return context;
 }
 
+// TODO: fix
 void Context::relayout(const Vector2& size, const Vector2i& windowSize, const Vector2i& framebufferSize) {
     /* Ensure we use the context we're linked to */
     ImGui::SetCurrentContext(_context);
@@ -175,25 +185,32 @@ void Context::relayout(const Vector2& size, const Vector2i& windowSize, const Ve
            one we set earier (has the [SCALED] suffix), wipe it and replace
            with a differently scaled version. Otherwise assume the fonts are
            user-supplied, do not touch them and just rebuild the cache. */
+
+/*
+        
         if(io.Fonts->Fonts.empty() || (io.Fonts->Fonts.size() == 1 && std::strcmp(io.Fonts->Fonts[0]->GetDebugName(), "ProggyClean.ttf, 13px [SCALED]") == 0)) {
-            /* Clear all fonts. Can't just replace the default font,
-               unfortunately */
+            // Clear all fonts. Can't just replace the default font,
+            //    unfortunately 
             io.Fonts->Clear();
 
-            /* Because ImGui doesn't have native HiDPI support yet, we upscale
-               the font for glyph prerendering and then downscale it back for
-               the UI */
+            //  Because ImGui doesn't have native HiDPI support yet, we upscale
+            //    the font for glyph prerendering and then downscale it back for
+            //    the UI 
             ImFontConfig cfg;
             std::strcpy(cfg.Name, "ProggyClean.ttf, 13px [SCALED]");
             cfg.SizePixels = 13.0f*nonZeroSupersamplingRatio;
             io.Fonts->AddFontDefault(&cfg);
         }
 
+        */
+
         _supersamplingRatio = supersamplingRatio;
 
-        /* Downscale back the upscaled font to achieve supersampling */
-        io.FontGlobalScale = 1.0f/nonZeroSupersamplingRatio;
+        //Downscale back the upscaled font to achieve supersampling 
+        //io.FontGlobalScale = 1.0f/nonZeroSupersamplingRatio;
+        
 
+        /*
         unsigned char *pixels;
         int width, height;
         int pixelSize;
@@ -214,12 +231,13 @@ void Context::relayout(const Vector2& size, const Vector2i& windowSize, const Ve
             .setImage(0, GL::TextureFormat::RGBA, image)
             #endif
             ;
-
+        */
         /* Clear texture to save RAM, we have it on the GPU now */
-        io.Fonts->ClearTexData();
+        // Now forbidden for some reason?
+        //io.Fonts->ClearTexData();
 
         /* Make the texture available through the ImFontAtlas */
-        io.Fonts->SetTexID(textureId(_texture));
+        // io.Fonts->SetTexID(textureId(_texture));
     }
 
     /* Display size is the window size. Scaling of this to the actual window
@@ -257,9 +275,72 @@ void Context::newFrame() {
     ImGui::NewFrame();
 }
 
+#define GL_CALL(_CALL)      _CALL
+// TODO: use texture support from Magnum
+void Context::updateTexture(ImTextureData* tex){
+    std::cout<<"Context::updateTexture"<<std::endl;
+    if (tex->Status == ImTextureStatus_WantCreate)
+    {
+        // Create and upload new texture to graphics system
+        //IMGUI_DEBUG_LOG("UpdateTexture #%03d: WantCreate %dx%d\n", tex->UniqueID, tex->Width, tex->Height);
+        CORRADE_INTERNAL_ASSERT(tex->TexID == 0 && tex->BackendUserData == nullptr);
+        CORRADE_INTERNAL_ASSERT(tex->Format == ImTextureFormat_RGBA32);
+
+        CORRADE_INTERNAL_ASSERT(tex->Width > 0 && tex->Height > 0 && tex->BytesPerPixel == 4);
+
+        ImageView2D image(PixelFormat::RGBA8Unorm, {tex->Width, tex->Height}, 
+        {tex->GetPixels(), std::size_t(tex->Width*tex->Height*tex->BytesPerPixel)});
+
+        GL::Texture2D *texture=new GL::Texture2D;
+        texture->setMagnificationFilter(GL::SamplerFilter::Linear)
+            .setMinificationFilter(GL::SamplerFilter::Linear)
+            #ifndef MAGNUM_TARGET_GLES2
+            .setStorage(1, GL::TextureFormat::RGBA8, image.size())
+            .setSubImage(0, {}, image)
+            #else
+            .setImage(0, GL::TextureFormat::RGBA, image)
+            #endif
+            ;
+
+        tex->SetTexID(textureId(*texture));
+        tex->BackendUserData=reinterpret_cast<void *>(texture);
+        tex->SetStatus(ImTextureStatus_OK);
+    }
+    else if (tex->Status == ImTextureStatus_WantUpdates)
+    {
+        CORRADE_INTERNAL_ASSERT(tex->BackendUserData != nullptr);        
+        CORRADE_INTERNAL_ASSERT(tex->Format == ImTextureFormat_RGBA32);
+        CORRADE_INTERNAL_ASSERT(tex->Width > 0 && tex->Height > 0 && tex->BytesPerPixel == 4);
+        
+        GL::Texture2D *texture=reinterpret_cast<GL::Texture2D *>(tex->BackendUserData);
+        std::vector<char> tmp;
+        for (ImTextureRect& r : tex->Updates)
+        {
+            tmp.resize(r.w*r.h*tex->BytesPerPixel);
+            char* out_p = tmp.data();
+            const int src_pitch = r.w * tex->BytesPerPixel;
+            for (int y = 0; y < r.h; y++, out_p += src_pitch)
+                memcpy(out_p, tex->GetPixelsAt(r.x, r.y + y), src_pitch);
+            
+            ImageView2D image(PixelFormat::RGBA8Unorm, {r.w, r.h}, 
+            {tmp.data(), std::size_t(r.w*r.h*tex->BytesPerPixel)});
+            texture->setSubImage(0, {r.x, r.y}, image);
+        }
+        tex->SetStatus(ImTextureStatus_OK);
+    }
+    else if (tex->Status == ImTextureStatus_WantDestroy && tex->UnusedFrames > 0){
+        delete reinterpret_cast<GL::Texture2D *>(tex->BackendUserData);
+        tex->BackendUserData=nullptr;
+        tex->SetTexID(ImTextureID_Invalid);
+        tex->SetStatus(ImTextureStatus_Destroyed);
+    }
+}
+
 void Context::drawFrame() {
     /* Ensure we use the context we're linked to */
     ImGui::SetCurrentContext(_context);
+
+
 
     ImGui::Render();
 
@@ -269,6 +350,11 @@ void Context::drawFrame() {
 
     ImDrawData* drawData = ImGui::GetDrawData();
     CORRADE_INTERNAL_ASSERT(drawData); /* This is always valid after Render() */
+    if (drawData->Textures != nullptr)
+        for (ImTextureData* tex : *drawData->Textures)
+            if (tex->Status != ImTextureStatus_OK)
+                updateTexture(tex);
+
     drawData->ScaleClipRects(io.DisplayFramebufferScale);
 
     const Matrix3 projection =

@@ -45,8 +45,11 @@
 
 #include "Magnum/ImGuiIntegration/visibility.h"
 
+#include <list>
+
 #ifndef DOXYGEN_GENERATING_OUTPUT
 struct ImGuiContext;
+struct ImTextureData;
 #endif
 
 namespace Magnum { namespace ImGuiIntegration {
@@ -706,6 +709,8 @@ class MAGNUM_IMGUIINTEGRATION_EXPORT Context {
         template<class Application> void connectApplicationClipboard(Application& application);
 
     private:
+        void updateTexture(ImTextureData* tex);
+
         template<class Application, class> friend struct Implementation::ApplicationClipboard;
 
         ImGuiContext* _context;
@@ -720,6 +725,8 @@ class MAGNUM_IMGUIINTEGRATION_EXPORT Context {
         /* Optionally used by connectApplicationClipboard() */
         void* _application;
         Containers::String _lastClipboardText;
+
+        std::list<GL::Texture2D> _textures;
 
     private:
         template<class KeyEvent> bool handleKeyEvent(KeyEvent& event, bool value);
