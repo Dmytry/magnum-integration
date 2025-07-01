@@ -53,7 +53,6 @@
 #include "Magnum/ImGuiIntegration/Integration.h"
 #include "Magnum/ImGuiIntegration/Widgets.h"
 #include <vector>
-#include <iostream>
 
 namespace Magnum { namespace ImGuiIntegration {
 
@@ -151,7 +150,7 @@ ImGuiContext* Context::release() {
     return context;
 }
 
-// TODO: fix
+// TODO: fix for new imgui
 void Context::relayout(const Vector2& size, const Vector2i& windowSize, const Vector2i& framebufferSize) {
     /* Ensure we use the context we're linked to */
     ImGui::SetCurrentContext(_context);
@@ -278,7 +277,6 @@ void Context::newFrame() {
 #define GL_CALL(_CALL)      _CALL
 // TODO: use texture support from Magnum
 void Context::updateTexture(ImTextureData* tex){
-    std::cout<<"Context::updateTexture"<<std::endl;
     if (tex->Status == ImTextureStatus_WantCreate)
     {
         // Create and upload new texture to graphics system
@@ -339,9 +337,6 @@ void Context::updateTexture(ImTextureData* tex){
 void Context::drawFrame() {
     /* Ensure we use the context we're linked to */
     ImGui::SetCurrentContext(_context);
-
-
-
     ImGui::Render();
 
     ImGuiIO& io = ImGui::GetIO();
